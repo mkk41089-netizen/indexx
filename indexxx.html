@@ -1,0 +1,259 @@
+import React, { useState, useEffect, useCallback } from 'react';
+import { Trophy, RefreshCw, Zap, Play } from 'lucide-react';
+
+const GRID_ROWS = 8;
+const GRID_COLS = 8;
+const COLORS = [
+  'bg-red-500',
+  'bg-blue-500',
+  'bg-green-500',
+  'bg-yellow-400',
+  'bg-purple-500'
+];
+
+// 獲取隨機顏色
+const getRandomColor = () => COLORS[Math.floor(Math.random() * COLORS.length)];
+
+// 生成初始網格
+const generateGrid = () => {
+  return Array.from({ length: GRID_ROWS }, () =>
+    Array.from({ length: GRID_COLS }, () => ({
+      id: Math.random().toString(36).substr(2, 9),
+      color: getRandomColor(),
+      isPopping: false,
+    }))
+  );
+};
+
+export default function App() {
+  const [grid, setGrid] = useState(generateGrid());
+  const [score, setScore] = useState(0);
+  const [highScore, setHighScore] = useState(0);
+  const [combo, setCombo] = useState(0);
+  const [isAnimating, setIsAnimating] = useState(false);
+  const [lastScoreDetails, setLastScoreDetails] = useState(null);
+
+  // 檢查是否有相鄰的同色方塊 (Flood Fill 演算法)
+  const findConnectedBlocks = (startRow, startCol, targetColor, currentGrid) => {
+    const connected = [];
+    const visited = new Set();
+    const stack = [[startRow, startCol]];
+
+    while (stack.length > 0) {
+      const [r, c] = stack.pop();
+      const key = `${r},${c}`;
+
+      if (
+        r >= 0 && r < GRID_ROWS &&
+        c >= 0 && c < GRID_COLS &&
+        !visited.has(key) &&
+        currentGrid[r][c] &&
+        currentGrid[r][c].color === targetColor
+      ) {
+        visited.add(key);
+        connected.push({ r, c });
+
+        // 檢查上下左右
+        stack.push([r + 1, c]);
+        stack.push([r - 1, c]);
+        stack.push([r, c + 1]);
+        stack.push([r, c - 1]);
+      }
+    }
+    return connected;
+  };
+
+  const handleBlockClick = (row, col) => {
+    if (isAnimating) return;
+
+    const targetColor = grid[row][col].color;
+    const connectedBlocks = findConnectedBlocks(row, col, targetColor, grid);
+
+    // 至少要有2個方塊才能消除
+    if (connectedBlocks.length < 2) return;
+
+    setIsAnimating(true);
+
+    // 1. 標記消除狀態 (觸發動畫)
+    const newGrid = [...grid.map(row => [...row])];
+    connectedBlocks.forEach(({ r, c }) => {
+      newGrid[r][c].isPopping = true;
+    });
+    setGrid(newGrid);
+
+    // 計算分數 (指數成長)
+    const baseScore = connectedBlocks.length * 10;
+    const bonus = Math.pow(connectedBlocks.length - 1, 2) * 5;
+    const totalPoints = baseScore + bonus;
+    
+    setScore(prev => prev + totalPoints);
+    setLastScoreDetails({ points: totalPoints, count: connectedBlocks.length });
+    
+    // 更新最高分
+    if (score + totalPoints > highScore) {
+      setHighScore(score + totalPoints);
+    }
+
+    // 2. 移除方塊並處理掉落 (延遲一點讓動畫播放)
+    setTimeout(() => {
+      applyGravity(newGrid, connectedBlocks);
+      setIsAnimating(false);
+      setLastScoreDetails(null);
+    }, 300);
+  };
+
+  const applyGravity = (currentGrid, connectedBlocks) => {
+    const nextGrid = Array.from({ length: GRID_ROWS }, () => Array(GRID_COLS).fill(null));
+
+    // 先將被消除的格子設為 null
+    const tempGrid = currentGrid.map(row => row.map(block => block));
+    connectedBlocks.forEach(({ r, c }) => {
+      tempGrid[r][c] = null;
+    });
+
+    // 處理每一列 (Column)
+    for (let c = 0; c < GRID_COLS; c++) {
+      let newCol = [];
+      
+      // 收集該列現有的非空方塊
+      for (let r = 0; r < GRID_ROWS; r++) {
+        if (tempGrid[r][c] !== null) {
+          newCol.push(tempGrid[r][c]);
+        }
+      }
+
+      // 計算需要補多少個新方塊
+      const missingCount = GRID_ROWS - newCol.length;
+      
+      // 生成新方塊並放在頂部 (陣列前面)
+      const newBlocks = Array.from({ length: missingCount }, () => ({
+        id: Math.random().toString(36).substr(2, 9),
+        color: getRandomColor(),
+        isPopping: false,
+        isNew: true // 用於進場動畫
+      }));
+
+      const finalCol = [...newBlocks, ...newCol];
+
+      // 將處理好的列填回 Grid
+      for (let r = 0; r < GRID_ROWS; r++) {
+        nextGrid[r][c] = finalCol[r];
+      }
+    }
+
+    setGrid(nextGrid);
+  };
+
+  const resetGame = () => {
+    setGrid(generateGrid());
+    setScore(0);
+    setCombo(0);
+    setIsAnimating(false);
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-900 flex items-center justify-center font-sans text-white p-4">
+      <div className="max-w-md w-full bg-slate-800 rounded-2xl shadow-2xl overflow-hidden border border-slate-700">
+        
+        {/* Header */}
+        <div className="p-6 bg-slate-800 border-b border-slate-700 flex justify-between items-center">
+          <div>
+            <h1 className="text-2xl font-bold bg-gradient-to-r from-pink-500 to-yellow-500 bg-clip-text text-transparent flex items-center gap-2">
+              <Zap className="w-6 h-6 text-yellow-400 fill-current" />
+              方塊消消樂
+            </h1>
+            <div className="text-slate-400 text-sm mt-1">
+              點擊同色方塊來得分！
+            </div>
+          </div>
+          <button 
+            onClick={resetGame}
+            className="p-2 bg-slate-700 hover:bg-slate-600 rounded-full transition-colors group"
+            title="重新開始"
+          >
+            <RefreshCw className="w-5 h-5 text-slate-300 group-hover:rotate-180 transition-transform duration-500" />
+          </button>
+        </div>
+
+        {/* Stats Bar */}
+        <div className="grid grid-cols-2 gap-4 p-4 bg-slate-800/50">
+          <div className="bg-slate-700/50 p-3 rounded-xl flex items-center justify-between">
+            <div className="text-xs text-slate-400 uppercase tracking-wider font-semibold">當前分數</div>
+            <div className="text-xl font-mono font-bold text-white relative">
+              {score}
+              {lastScoreDetails && (
+                <span className="absolute -top-6 right-0 text-sm text-yellow-400 font-bold animate-bounce whitespace-nowrap">
+                  +{lastScoreDetails.points}
+                </span>
+              )}
+            </div>
+          </div>
+          <div className="bg-slate-700/50 p-3 rounded-xl flex items-center justify-between">
+            <div className="flex items-center gap-1 text-xs text-slate-400 uppercase tracking-wider font-semibold">
+              <Trophy className="w-3 h-3" /> 最高分
+            </div>
+            <div className="text-xl font-mono font-bold text-yellow-500">{highScore}</div>
+          </div>
+        </div>
+
+        {/* Game Grid Container */}
+        <div className="p-4 flex justify-center bg-slate-900/50">
+          <div 
+            className="grid gap-1.5 sm:gap-2 relative"
+            style={{ 
+              gridTemplateColumns: `repeat(${GRID_COLS}, minmax(0, 1fr))`,
+              width: '100%',
+              maxWidth: '360px'
+            }}
+          >
+            {grid.map((row, rowIndex) => (
+              row.map((block, colIndex) => (
+                <div
+                  key={`${block.id}-${rowIndex}-${colIndex}`} // Key 包含位置以強制刷新動畫
+                  onClick={() => handleBlockClick(rowIndex, colIndex)}
+                  className={`
+                    aspect-square rounded-lg cursor-pointer
+                    transform transition-all duration-300 ease-out
+                    flex items-center justify-center
+                    relative overflow-hidden
+                    hover:brightness-110 hover:scale-105 active:scale-95
+                    ${block.color}
+                    ${block.isPopping ? 'scale-0 opacity-0 rotate-45' : 'scale-100 opacity-100'}
+                    ${block.isNew ? 'animate-drop-in' : ''}
+                  `}
+                  style={{
+                    boxShadow: 'inset 0 2px 4px rgba(255,255,255,0.3), 0 4px 6px rgba(0,0,0,0.2)'
+                  }}
+                >
+                  {/* Glossy effect */}
+                  <div className="absolute top-0 left-0 w-full h-1/2 bg-gradient-to-b from-white/20 to-transparent pointer-events-none"></div>
+                  
+                  {/* Inner shine for extra "jelly" look */}
+                  <div className="absolute top-1 right-1 w-2 h-2 bg-white/40 rounded-full blur-[1px]"></div>
+                </div>
+              ))
+            ))}
+          </div>
+        </div>
+
+        {/* Footer / Instructions */}
+        <div className="p-4 bg-slate-800 text-center">
+          <p className="text-slate-500 text-sm">
+            連接的方塊越多，分數越高！ <br/>
+            <span className="text-slate-600 text-xs">(最少 2 個相同顏色)</span>
+          </p>
+        </div>
+      </div>
+
+      <style jsx global>{`
+        @keyframes drop-in {
+          0% { transform: translateY(-20px); opacity: 0; }
+          100% { transform: translateY(0); opacity: 1; }
+        }
+        .animate-drop-in {
+          animation: drop-in 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+        }
+      `}</style>
+    </div>
+  );
+}
