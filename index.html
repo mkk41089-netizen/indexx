@@ -1,0 +1,356 @@
+import React, { useState, useEffect, useCallback } from 'react';
+import { Sparkles, RefreshCw, Trophy, Timer, Play, RotateCcw } from 'lucide-react';
+
+// 寶石種類 (使用 Emoji)
+const GEM_TYPES = ['💎', 'Ruby', 'Emerald', 'Gold', 'Amethyst', 'Sapphire'];
+// 對應的顯示圖示
+const GEM_ICONS = {
+  '💎': '💎',      // 鑽石 (藍)
+  'Ruby': '❤️',    // 紅心 (紅)
+  'Emerald': '🍀', // 四葉草 (綠)
+  'Gold': '⭐',    // 星星 (黃)
+  'Amethyst': '🟣',// 圓形 (紫)
+  'Sapphire': '🔷' // 方形 (深藍)
+};
+
+// 版面大小
+const BOARD_SIZE = 8;
+
+const App = () => {
+  const [board, setBoard] = useState([]);
+  const [selectedGem, setSelectedGem] = useState(null);
+  const [score, setScore] = useState(0);
+  const [timeLeft, setTimeLeft] = useState(60);
+  const [gameState, setGameState] = useState('idle'); // idle, playing, gameover
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [combo, setCombo] = useState(0);
+
+  // 初始化遊戲盤面
+  const createBoard = useCallback(() => {
+    const newBoard = [];
+    for (let i = 0; i < BOARD_SIZE; i++) {
+      const row = [];
+      for (let j = 0; j < BOARD_SIZE; j++) {
+        row.push(GEM_TYPES[Math.floor(Math.random() * GEM_TYPES.length)]);
+      }
+      newBoard.push(row);
+    }
+    // 簡單檢查初始不應該有太多連線，這裡為了流暢度先允許，反正會被 useEffect 消除
+    return newBoard;
+  }, []);
+
+  const startGame = () => {
+    setBoard(createBoard());
+    setScore(0);
+    setTimeLeft(60);
+    setGameState('playing');
+    setCombo(0);
+    setIsProcessing(false);
+    setSelectedGem(null);
+  };
+
+  // 計時器
+  useEffect(() => {
+    let timer;
+    if (gameState === 'playing' && timeLeft > 0) {
+      timer = setInterval(() => {
+        setTimeLeft((prev) => prev - 1);
+      }, 1000);
+    } else if (timeLeft === 0 && gameState === 'playing') {
+      setGameState('gameover');
+    }
+    return () => clearInterval(timer);
+  }, [gameState, timeLeft]);
+
+  // 檢查是否有匹配 (橫向或縱向 3 個以上)
+  const checkForMatches = useCallback((currentBoard) => {
+    const matches = new Set();
+
+    // 橫向檢查
+    for (let r = 0; r < BOARD_SIZE; r++) {
+      for (let c = 0; c < BOARD_SIZE - 2; c++) {
+        const gem1 = currentBoard[r][c];
+        const gem2 = currentBoard[r][c + 1];
+        const gem3 = currentBoard[r][c + 2];
+        if (gem1 && gem1 === gem2 && gem2 === gem3) {
+          matches.add(`${r},${c}`);
+          matches.add(`${r},${c + 1}`);
+          matches.add(`${r},${c + 2}`);
+        }
+      }
+    }
+
+    // 縱向檢查
+    for (let c = 0; c < BOARD_SIZE; c++) {
+      for (let r = 0; r < BOARD_SIZE - 2; r++) {
+        const gem1 = currentBoard[r][c];
+        const gem2 = currentBoard[r + 1][c];
+        const gem3 = currentBoard[r + 2][c];
+        if (gem1 && gem1 === gem2 && gem2 === gem3) {
+          matches.add(`${r},${c}`);
+          matches.add(`${r + 1},${c}`);
+          matches.add(`${r + 2},${c}`);
+        }
+      }
+    }
+
+    return Array.from(matches).map(str => {
+      const [r, c] = str.split(',').map(Number);
+      return { r, c };
+    });
+  }, []);
+
+  // 遊戲主循環邏輯 (消除 -> 下落 -> 填充)
+  useEffect(() => {
+    if (gameState !== 'playing') return;
+
+    const gameLoop = async () => {
+      const matches = checkForMatches(board);
+
+      if (matches.length > 0) {
+        setIsProcessing(true);
+        
+        // 1. 等待一下讓玩家看到連線 (可選，這裡為了節奏快直接消除)
+        await new Promise(resolve => setTimeout(resolve, 300));
+
+        // 2. 消除寶石並計算分數
+        const newBoard = board.map(row => [...row]);
+        matches.forEach(({ r, c }) => {
+          newBoard[r][c] = null; // 標記為空
+        });
+
+        setScore(prev => prev + matches.length * 10 * (combo + 1));
+        setCombo(prev => prev + 1);
+        setBoard(newBoard);
+
+        // 3. 下落邏輯
+        setTimeout(() => {
+          const boardAfterFall = handleGravity(newBoard);
+          setBoard(boardAfterFall);
+          
+          // 4. 填充新寶石
+          setTimeout(() => {
+             const boardRefilled = refillBoard(boardAfterFall);
+             setBoard(boardRefilled);
+             // 循環會再次觸發 useEffect，直到沒有匹配
+          }, 300);
+        }, 300);
+
+      } else {
+        setIsProcessing(false);
+        setCombo(0);
+      }
+    };
+
+    gameLoop();
+  }, [board, gameState, checkForMatches, combo]);
+
+  // 處理重力 (寶石下落)
+  const handleGravity = (currentBoard) => {
+    const newBoard = Array(BOARD_SIZE).fill(null).map(() => Array(BOARD_SIZE).fill(null));
+
+    for (let c = 0; c < BOARD_SIZE; c++) {
+      let writeRow = BOARD_SIZE - 1;
+      for (let r = BOARD_SIZE - 1; r >= 0; r--) {
+        if (currentBoard[r][c] !== null) {
+          newBoard[writeRow][c] = currentBoard[r][c];
+          writeRow--;
+        }
+      }
+    }
+    return newBoard;
+  };
+
+  // 填充空缺
+  const refillBoard = (currentBoard) => {
+    const newBoard = currentBoard.map(row => [...row]);
+    for (let r = 0; r < BOARD_SIZE; r++) {
+      for (let c = 0; c < BOARD_SIZE; c++) {
+        if (newBoard[r][c] === null) {
+          newBoard[r][c] = GEM_TYPES[Math.floor(Math.random() * GEM_TYPES.length)];
+        }
+      }
+    }
+    return newBoard;
+  };
+
+  // 處理點擊
+  const handleGemClick = (r, c) => {
+    if (gameState !== 'playing' || isProcessing) return;
+
+    // 如果沒有選中，則選中
+    if (!selectedGem) {
+      setSelectedGem({ r, c });
+      return;
+    }
+
+    // 如果點擊同一個，取消選中
+    if (selectedGem.r === r && selectedGem.c === c) {
+      setSelectedGem(null);
+      return;
+    }
+
+    // 檢查是否相鄰
+    const isAdjacent = 
+      (Math.abs(selectedGem.r - r) === 1 && selectedGem.c === c) ||
+      (Math.abs(selectedGem.c - c) === 1 && selectedGem.r === r);
+
+    if (isAdjacent) {
+      attemptSwap(selectedGem, { r, c });
+      setSelectedGem(null);
+    } else {
+      // 如果不相鄰，直接切換選中目標
+      setSelectedGem({ r, c });
+    }
+  };
+
+  // 嘗試交換
+  const attemptSwap = async (pos1, pos2) => {
+    setIsProcessing(true);
+    
+    // 建立臨時交換後的版面
+    const tempBoard = board.map(row => [...row]);
+    const gem1 = tempBoard[pos1.r][pos1.c];
+    const gem2 = tempBoard[pos2.r][pos2.c];
+    tempBoard[pos1.r][pos1.c] = gem2;
+    tempBoard[pos2.r][pos2.c] = gem1;
+
+    setBoard(tempBoard);
+
+    // 等待動畫時間
+    await new Promise(resolve => setTimeout(resolve, 300));
+
+    // 檢查交換後是否有效
+    const matches = checkForMatches(tempBoard);
+
+    if (matches.length === 0) {
+      // 無效交換，換回來
+      const revertBoard = tempBoard.map(row => [...row]);
+      revertBoard[pos1.r][pos1.c] = gem1;
+      revertBoard[pos2.r][pos2.c] = gem2;
+      setBoard(revertBoard);
+      setIsProcessing(false);
+    } else {
+      // 有效交換，useEffect 會接手處理消除邏輯
+      // 這裡不需要做什麼，因為 state 已經更新為 tempBoard
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-indigo-900 via-purple-900 to-pink-800 flex flex-col items-center justify-center p-4 font-sans text-white select-none">
+      
+      {/* 標題與數據欄 */}
+      <div className="w-full max-w-md mb-6 flex justify-between items-center bg-white/10 backdrop-blur-md p-4 rounded-2xl shadow-xl border border-white/20">
+        <div className="flex flex-col items-center">
+          <div className="flex items-center text-yellow-400 mb-1">
+            <Trophy size={20} className="mr-1" />
+            <span className="text-xs uppercase tracking-wider font-bold">分數</span>
+          </div>
+          <span className="text-2xl font-black font-mono">{score}</span>
+        </div>
+
+        <div className="flex flex-col items-center">
+          <div className="flex items-center text-pink-400 mb-1">
+            <Timer size={20} className="mr-1" />
+            <span className="text-xs uppercase tracking-wider font-bold">時間</span>
+          </div>
+          <span className={`text-2xl font-black font-mono ${timeLeft <= 10 ? 'text-red-500 animate-pulse' : ''}`}>
+            {timeLeft}
+          </span>
+        </div>
+      </div>
+
+      {/* 遊戲區域 */}
+      <div className="relative">
+        <div 
+          className="grid grid-cols-8 gap-1 bg-black/40 p-2 rounded-xl shadow-2xl backdrop-blur-sm border-2 border-white/10"
+          style={{ width: 'min(90vw, 400px)', height: 'min(90vw, 400px)' }}
+        >
+          {gameState === 'idle' ? (
+            <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/60 rounded-xl backdrop-blur-sm">
+              <Sparkles size={64} className="text-yellow-400 mb-4 animate-bounce" />
+              <h1 className="text-4xl font-bold mb-2 text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 to-pink-500">
+                寶石消消樂
+              </h1>
+              <p className="text-gray-300 mb-8">點擊相鄰寶石進行交換消除！</p>
+              <button 
+                onClick={startGame}
+                className="group relative px-8 py-3 bg-gradient-to-r from-blue-500 to-purple-600 rounded-full font-bold text-lg shadow-lg hover:shadow-blue-500/50 transition-all transform hover:-translate-y-1 active:scale-95 flex items-center"
+              >
+                <Play size={24} className="mr-2 fill-current" />
+                開始遊戲
+              </button>
+            </div>
+          ) : null}
+
+          {gameState === 'gameover' ? (
+            <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/80 rounded-xl backdrop-blur-sm animate-fade-in">
+              <h2 className="text-5xl font-bold text-white mb-2 drop-shadow-[0_0_10px_rgba(255,255,255,0.5)]">
+                時間到!
+              </h2>
+              <div className="text-2xl text-yellow-400 mb-6 font-mono">
+                最終得分: {score}
+              </div>
+              <button 
+                onClick={startGame}
+                className="px-8 py-3 bg-gradient-to-r from-green-500 to-emerald-600 rounded-full font-bold text-lg shadow-lg hover:shadow-green-500/50 transition-all transform hover:-translate-y-1 active:scale-95 flex items-center"
+              >
+                <RotateCcw size={24} className="mr-2" />
+                再玩一次
+              </button>
+            </div>
+          ) : null}
+
+          {/* 網格渲染 */}
+          {board.length > 0 && board.map((row, r) => (
+            row.map((gem, c) => (
+              <div
+                key={`${r}-${c}`}
+                onClick={() => handleGemClick(r, c)}
+                className={`
+                  relative flex items-center justify-center
+                  rounded-lg cursor-pointer transition-all duration-300
+                  ${selectedGem?.r === r && selectedGem?.c === c 
+                    ? 'bg-white/30 scale-110 z-10 shadow-[0_0_15px_rgba(255,255,255,0.6)] ring-2 ring-white' 
+                    : 'hover:bg-white/10 active:scale-95'}
+                  ${!gem ? 'invisible' : ''}
+                `}
+              >
+                <span className="text-2xl sm:text-3xl filter drop-shadow-lg transform transition-transform duration-300 hover:rotate-12">
+                  {gem ? GEM_ICONS[gem] : ''}
+                </span>
+              </div>
+            ))
+          ))}
+        </div>
+      </div>
+
+      {/* 控制與提示 */}
+      <div className="mt-8 flex gap-4">
+        <button 
+          onClick={startGame}
+          className="p-3 rounded-full bg-white/10 hover:bg-white/20 backdrop-blur-md transition-colors border border-white/10"
+          title="重新開始"
+        >
+          <RefreshCw size={24} />
+        </button>
+      </div>
+
+      <div className="mt-4 text-white/40 text-sm text-center">
+        手機上也能順暢遊玩 • 自動填充 • 連擊加分
+      </div>
+
+      <style jsx global>{`
+        @keyframes fade-in {
+          from { opacity: 0; transform: scale(0.9); }
+          to { opacity: 1; transform: scale(1); }
+        }
+        .animate-fade-in {
+          animation: fade-in 0.3s ease-out forwards;
+        }
+      `}</style>
+    </div>
+  );
+};
+
+export default App;
